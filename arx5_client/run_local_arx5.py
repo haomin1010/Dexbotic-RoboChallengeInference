@@ -3,7 +3,7 @@
 Dexbotic local ARX5 execution.
 
 Sends VLA inference results from Dexbotic to local ARX5 arm.
-Uses built-in hardware interface (arm + cameras), no external spirit dependency.
+Uses built-in hardware interface (arm + cameras)
 
 Usage
 -----
@@ -153,7 +153,7 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    # Import from built-in package (no external spirit dependency)
+    # Import from built-in package
     try:
         from .arm_client import ARX5ArmClient
         from .local_robot_interface import (
