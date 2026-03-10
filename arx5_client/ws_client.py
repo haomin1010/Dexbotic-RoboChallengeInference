@@ -23,6 +23,7 @@ def _encode_robot_state(robot_state: dict) -> dict:
         "job_id": robot_state.get("job_id", "local"),
         "task_name": robot_state.get("task_name"),
         "timestamp": robot_state.get("timestamp", 0.0),
+        "new_execution": bool(robot_state.get("new_execution", False)),
     }
 
 
@@ -74,4 +75,7 @@ class RemoteInferenceClient:
         Returns:
             List of actions [[x,y,z,rx,ry,rz,g], ...]
         """
+        if new_execution:
+            robot_state = dict(robot_state)
+            robot_state["new_execution"] = True
         return asyncio.run(_infer_async(self.server_url, self.task_name, robot_state))

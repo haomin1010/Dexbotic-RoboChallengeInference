@@ -10,3 +10,4 @@ uvicorn
 hydra-core
 omegaconf
 scipy
+websockets

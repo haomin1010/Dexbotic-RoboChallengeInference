@@ -9,6 +9,7 @@ Borrows SDK setup and SingleArm usage from dexbotic/hardware/arx_x5.
 import ctypes
 import logging
 import os
+import sys
 import time
 
 import numpy as np
@@ -208,7 +209,7 @@ class ARX5ArmClient:
             if len(action) < 7:
                 action = list(action) + [0.0] * (7 - len(action))
             xyzrpy = action[:6]
-            gripper = 50 * float(action[6])
+            gripper = float(action[6])
 
             self.arm.set_ee_pose_xyzrpy(xyzrpy)
             self.arm.set_catch_pos(gripper)

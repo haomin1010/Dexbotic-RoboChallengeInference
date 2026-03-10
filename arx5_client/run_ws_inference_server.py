@@ -6,7 +6,7 @@ Dexbotic 推理服务入口：加载 DM0 模型，通过 WebSocket 提供动作�
 
 Usage
 -----
-  python -m local_arx5.run_ws_inference_server \\
+  python -m arx5_client.run_ws_inference_server \\
       --host 0.0.0.0 --port 8765 \\
       --task_name open_the_drawer \\
       --checkpoint ./checkpoints/DM0-table30_generalist_arx5
@@ -21,7 +21,10 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from local_arx5.ws_inference_server import run_ws_inference_server
+try:
+    from .ws_inference_server import run_ws_inference_server
+except ImportError:
+    from ws_inference_server import run_ws_inference_server
 
 logging.basicConfig(
     level=logging.INFO,
