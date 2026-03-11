@@ -7,14 +7,19 @@ Borrows SDK setup and SingleArm usage from dexbotic/hardware/arx_x5.
 """
 
 import ctypes
+import json
 import logging
 import os
 import sys
 import time
+from pathlib import Path
 
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+# 教示位置保存文件（[N] 保存，[M] 读取；重启后仍有效）
+_RECORDED_POSITION_FILE = Path(__file__).resolve().parent.parent / "recorded_position.json"
 
 # ---------------------------------------------------------------------------
 # ARX X5 SDK — auto-discover path, pre-load native libs
@@ -160,27 +165,49 @@ class ARX5ArmClient:
         self.arm.gravity_compensation()
 
     def exit_teach_and_record(self) -> None:
-        """Record current position and exit teach mode (hold position)."""
+        """Record current position, save to file, and exit teach mode (hold position)."""
         self._recorded_position = self.get_state()
+        try:
+            _RECORDED_POSITION_FILE.write_text(
+                json.dumps({"recorded_position": self._recorded_position}, indent=2),
+                encoding="utf-8",
+            )
+            logger.info("Recorded position saved to %s", _RECORDED_POSITION_FILE)
+        except OSError as e:
+            logger.warning("Failed to save recorded position: %s", e)
         self.hold_position()
 
     def has_recorded_position(self) -> bool:
-        """True if a position was recorded via exit_teach_and_record()."""
-        return self._recorded_position is not None
+        """True if a position was recorded (file exists or in-memory)."""
+        return (
+            self._recorded_position is not None
+            or _RECORDED_POSITION_FILE.exists()
+        )
+
+    def _load_recorded_position(self) -> list:
+        """Load recorded position from file or memory. Raises if none."""
+        if self._recorded_position is not None:
+            return self._recorded_position
+        if _RECORDED_POSITION_FILE.exists():
+            try:
+                data = json.loads(_RECORDED_POSITION_FILE.read_text(encoding="utf-8"))
+                return data["recorded_position"]
+            except (json.JSONDecodeError, KeyError, OSError) as e:
+                raise ValueError(f"Cannot load recorded position from {_RECORDED_POSITION_FILE}: {e}") from e
+        raise ValueError("No recorded position — press [B] to teach, then [N] to record first")
 
     def move_to_recorded(
         self, num_steps: int = 20, step_interval: float = 0.1
     ) -> None:
-        """Move to the last recorded position (must have called exit_teach_and_record first).
+        """Move to the recorded position (from file or memory).
         Uses linear interpolation over num_steps with step_interval seconds between steps.
         """
-        if self._recorded_position is None:
-            raise ValueError("No recorded position — press [B] to teach, then [N] to record first")
+        target_list = self._load_recorded_position()
         self.hold_position()
         time.sleep(0.1)
 
         start = np.array(self.get_state(), dtype=np.float64)
-        target = np.array(self._recorded_position, dtype=np.float64)
+        target = np.array(target_list, dtype=np.float64)
 
         for i in range(1, num_steps + 1):
             t = i / num_steps
