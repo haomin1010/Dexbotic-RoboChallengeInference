@@ -192,12 +192,12 @@ def local_control_loop_dexbotic(
         interface.hold_position()
         if safe_mode:
             logger.info(
-                "Keyboard: [Space] e-stop | [H] home | [B] teach | [N] record | [I] next chunk | [M] goto recorded | [R] resume | [Q] quit"
+                "Keyboard: [Space] e-stop | [H] home | [B] teach | [N] record (save to file) | [I] next chunk | [M] goto recorded | [R] resume | [Q] quit"
             )
             logger.info("SAFE MODE enabled: press [R] to arm control, then [I] before each inference request.")
         else:
             logger.info(
-                "Keyboard: [Space] e-stop | [H] home | [B] teach | [M] goto recorded | [R] resume | [Q] quit"
+                "Keyboard: [Space] e-stop | [H] home | [B] teach | [N] record (save to file) | [M] goto recorded | [R] resume | [Q] quit"
             )
 
     if not kb:
@@ -257,7 +257,7 @@ def local_control_loop_dexbotic(
                     if key == "n":
                         interface.exit_teach_and_record()
                         state = LoopState.STOPPED
-                        logger.info("Position recorded")
+                        logger.info("Position recorded and saved to file")
 
             if state != LoopState.RUNNING:
                 time.sleep(0.05)
