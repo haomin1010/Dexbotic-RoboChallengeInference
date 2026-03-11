@@ -132,6 +132,12 @@ def main() -> None:
     )
     parser.add_argument("--cam_width", type=int, default=640)
     parser.add_argument("--cam_height", type=int, default=480)
+    parser.add_argument(
+        "--flip_cameras",
+        nargs="*",
+        default=[],
+        help="Camera names to rotate 180° (镜头安反时使用，e.g. side wrist front)",
+    )
     # Image & control
     parser.add_argument("--image_size", type=int, nargs=2, default=[728, 728], metavar=("W", "H"))
     parser.add_argument("--duration", type=float, default=0.1, help="Seconds per action step")
@@ -242,6 +248,7 @@ def main() -> None:
         arm_client=arm_client,
         camera_manager=camera_mgr,
         image_type_to_camera=DEFAULT_IMAGE_TYPE_TO_CAMERA,
+        flip_cameras=args.flip_cameras,
     )
 
     image_size = list(args.image_size)

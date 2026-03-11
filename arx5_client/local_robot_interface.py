@@ -121,8 +121,10 @@ DEFAULT_IMAGE_TYPE_TO_CAMERA = {
 }
 
 
-def _encode_image_bgr_to_jpeg(bgr: np.ndarray, width: int, height: int) -> bytes:
-    """Resize BGR array and encode as JPEG bytes."""
+def _encode_image_bgr_to_jpeg(bgr: np.ndarray, width: int, height: int, flip_180: bool = False) -> bytes:
+    """Resize BGR array and encode as JPEG bytes. Optionally rotate 180° (镜头安反时使用)."""
+    if flip_180:
+        bgr = cv2.flip(bgr, -1)  # -1 = 同时水平+垂直翻转 = 旋转180度
     if width > 0 and height > 0 and (bgr.shape[1], bgr.shape[0]) != (width, height):
         bgr = cv2.resize(bgr, (width, height), interpolation=cv2.INTER_LINEAR)
     _, buf = cv2.imencode(".jpg", bgr)
@@ -142,6 +144,7 @@ class LocalRobotInterface:
         arm_client: ARX5ArmClient,
         camera_manager: Any,
         image_type_to_camera: Optional[dict[str, str]] = None,
+        flip_cameras: Optional[list[str]] = None,
     ):
         """
         Args:
@@ -149,10 +152,12 @@ class LocalRobotInterface:
             camera_manager: RealSenseCameraManager or USBCameraManager
             image_type_to_camera: Mapping from robochallenge image_type (high, left_hand, right_hand)
                                  to local camera name. Default: high->side, left_hand->wrist, right_hand->front
+            flip_cameras: Camera names to rotate 180° (e.g. ["side", "wrist"]). 用于镜头安反时矫正
         """
         self.arm_client = arm_client
         self.camera_manager = camera_manager
         self.image_type_to_camera = image_type_to_camera or DEFAULT_IMAGE_TYPE_TO_CAMERA.copy()
+        self.flip_cameras = set(flip_cameras or [])
 
     def get_state(
         self,
@@ -179,7 +184,8 @@ class LocalRobotInterface:
             cam_name = self.image_type_to_camera.get(itype, itype)
             if cam_name in frames:
                 bgr = frames[cam_name]
-                img_bytes = _encode_image_bgr_to_jpeg(bgr, width, height)
+                flip_180 = cam_name in self.flip_cameras
+                img_bytes = _encode_image_bgr_to_jpeg(bgr, width, height, flip_180=flip_180)
                 images[itype] = img_bytes
             else:
                 # Fallback: black image
