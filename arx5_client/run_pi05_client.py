@@ -147,16 +147,16 @@ def main() -> None:
     if safe_mode and args.no_keyboard:
         parser.error("SAFE_MODE requires keyboard control; remove --no_keyboard or run with SAFE_MODE=0")
 
-    # Arm
-    arm_client = ARX5ArmClient(can_port=args.can_port, arm_type=args.arm_type, use_stub=args.use_stub)
-
-    # Cameras
+    # Cameras first — avoid libusb conflict when ARX SDK .so files are pre-loaded via __init__
     camera_map = _parse_cameras(args.cameras)
     if args.use_usb_cams:
         camera_map = {k: int(v) for k, v in camera_map.items()}
         camera_mgr = USBCameraManager(camera_map, width=args.cam_width, height=args.cam_height)
     else:
         camera_mgr = RealSenseCameraManager(camera_map, width=args.cam_width, height=args.cam_height)
+
+    # Arm
+    arm_client = ARX5ArmClient(can_port=args.can_port, arm_type=args.arm_type, use_stub=args.use_stub)
 
     # image_type -> camera mapping
     it2c = dict(IMAGE_TYPE_TO_CAMERA)

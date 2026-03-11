@@ -14,13 +14,17 @@ import termios
 import threading
 import time
 import tty
+from datetime import datetime
 from enum import Enum, auto
 from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-SAFE_MODE_MAX_TRANSLATION_METERS = 0.10
+SAFE_MODE_MAX_TRANSLATION_METERS = 0.05
+
+# 执行日志目录（机械臂真实执行时保存 state + action）
+_EXEC_LOG_DIR = Path(__file__).resolve().parent.parent / "execution_logs"
 
 
 class LoopState(Enum):
@@ -103,23 +107,15 @@ def _prepare_safe_action(
     return result
 
 
-def _save_inference_io(record_dir: Path, round_idx: int, robot_state: dict, actions: list) -> None:
-    """Save input (robot_state) and output (actions) to record_dir/round_NNN/.
-
-    Saved structure:
-      input/ - current_ee_state.json [x,y,z,euler_x,euler_y,euler_z,gripper], images, state.json
-      output/ - actions.json (model-returned actions, EE format)
-    """
-    rd = record_dir / f"round_{round_idx:04d}"
-    rd.mkdir(parents=True, exist_ok=True)
-    input_dir = rd / "input"
+def _save_state_and_actions(save_dir: Path, robot_state: dict, actions: list) -> None:
+    """Save robot_state and actions to save_dir/input/ and save_dir/output/."""
+    save_dir.mkdir(parents=True, exist_ok=True)
+    input_dir = save_dir / "input"
     input_dir.mkdir(exist_ok=True)
-    # Images
     images = robot_state.get("images", {})
     for name, data in images.items():
         if isinstance(data, bytes):
             (input_dir / f"{name}.jpg").write_bytes(data)
-    # Current robot state in EE format [x, y, z, euler_x, euler_y, euler_z, gripper]
     current_ee = robot_state.get("action")
     if current_ee is not None:
         (input_dir / "current_ee_state.json").write_text(
@@ -129,7 +125,6 @@ def _save_inference_io(record_dir: Path, round_idx: int, robot_state: dict, acti
             ),
             encoding="utf-8",
         )
-    # Metadata
     state_meta = {
         "job_id": robot_state.get("job_id"),
         "timestamp": robot_state.get("timestamp"),
@@ -137,10 +132,15 @@ def _save_inference_io(record_dir: Path, round_idx: int, robot_state: dict, acti
         "pending_actions": robot_state.get("pending_actions"),
     }
     (input_dir / "state.json").write_text(json.dumps(state_meta, indent=2, ensure_ascii=False), encoding="utf-8")
-    # Output: model-returned actions (EE format, [x,y,z,euler_x,euler_y,euler_z,gripper] per step)
-    output_dir = rd / "output"
+    output_dir = save_dir / "output"
     output_dir.mkdir(exist_ok=True)
     (output_dir / "actions.json").write_text(json.dumps(actions, indent=2), encoding="utf-8")
+
+
+def _save_inference_io(record_dir: Path, round_idx: int, robot_state: dict, actions: list) -> None:
+    """Save input (robot_state) and output (actions) to record_dir/round_NNN/."""
+    rd = record_dir / f"round_{round_idx:04d}"
+    _save_state_and_actions(rd, robot_state, actions)
     logger.info("Saved inference I/O to %s", rd)
 
 
@@ -155,6 +155,7 @@ def local_control_loop_dexbotic(
     use_keyboard: bool = True,
     safe_mode: bool = False,
     record_dir: Optional[str | Path] = None,
+    exec_log_dir: Optional[str | Path] = None,
 ) -> None:
     """
     Main loop: get local state -> infer (runner or remote) -> execute actions locally.
@@ -170,12 +171,15 @@ def local_control_loop_dexbotic(
         use_keyboard: If True, Space=e-stop, R=resume, Q=quit, etc.
         safe_mode: If True, cap xyz step to 10cm and require [I] before each inference request.
         record_dir: If set, save input/output to record_dir/round_NNN/ and skip execution (不执行机械臂).
+        exec_log_dir: If set, when arm executes, save state+actions to exec_log_dir/ (default: execution_logs/).
     """
     inferrer = inference_client if inference_client is not None else runner
     if inferrer is None:
         raise ValueError("Either runner or inference_client must be provided")
     record_path = Path(record_dir) if record_dir else None
+    exec_log_path = Path(exec_log_dir) if exec_log_dir is not None else _EXEC_LOG_DIR
     round_counter = 0
+    exec_round_counter = 0
     state = LoopState.STOPPED if use_keyboard else LoopState.RUNNING
     running = True
     kb = KeyboardListener() if use_keyboard else None
@@ -312,6 +316,13 @@ def local_control_loop_dexbotic(
                     logger.info("RECORD MODE: press [I] to request next inference.")
             else:
                 # Execute
+                try:
+                    rd = exec_log_path / f"exec_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{exec_round_counter:04d}"
+                    _save_state_and_actions(rd, robot_state, actions)
+                    logger.info("Saved execution log to %s", rd)
+                except OSError as e:
+                    logger.warning("Failed to save execution log: %s", e)
+                exec_round_counter += 1
                 interface.execute_actions(actions, duration, action_type)
                 logger.info("Executed %d actions", len(actions))
                 if safe_mode:
