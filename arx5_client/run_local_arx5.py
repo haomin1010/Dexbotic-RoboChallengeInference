@@ -42,6 +42,7 @@ Usage
 
 import argparse
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -57,6 +58,11 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+def _safe_mode_enabled() -> bool:
+    """SAFE_MODE defaults to on; only SAFE_MODE=0 disables it."""
+    return os.environ.get("SAFE_MODE", "1") != "0"
 
 
 def _parse_cameras(specs: list[str]) -> dict:
@@ -143,6 +149,12 @@ def main() -> None:
     parser.add_argument("--duration", type=float, default=0.1, help="Seconds per action step")
     parser.add_argument("--no_keyboard", action="store_true", help="Disable keyboard control")
     parser.add_argument(
+        "--record_dir",
+        type=str,
+        default=None,
+        help="Save inference input/output to dir (不执行机械臂)",
+    )
+    parser.add_argument(
         "--gripper_scale",
         type=float,
         default=50,
@@ -158,6 +170,7 @@ def main() -> None:
     parser.add_argument("--list_cameras", action="store_true", help="List RealSense devices and exit")
 
     args = parser.parse_args()
+    safe_mode = _safe_mode_enabled()
 
     # Import from built-in package
     try:
@@ -194,6 +207,8 @@ def main() -> None:
         parser.error("--task_name is required (unless --list_cameras)")
     if not use_remote and not args.checkpoint:
         parser.error("--checkpoint is required when not using --server_url")
+    if safe_mode and args.no_keyboard:
+        parser.error("SAFE_MODE requires keyboard control; remove --no_keyboard or run with SAFE_MODE=0")
 
     # Validate task (ARX5 only)
     from utils.constants import TASK_METADATA, IMAGE_TYPE_MAP
@@ -286,15 +301,22 @@ def main() -> None:
             task_name=args.task_name,
             image_type=image_type,
             action_horizon=args.action_horizon,
-        postprocess_args={
-            "gripper_threshold": 0,  # 缩放前不裁剪，保留小值
-            "gripper_scale": args.gripper_scale if args.gripper_scale > 0 else None,
-            "gripper_max": args.gripper_max,
-        },
+            postprocess_args={
+                "gripper_threshold": 0,
+                "gripper_scale": args.gripper_scale if args.gripper_scale > 0 else None,
+                "gripper_max": args.gripper_max,
+            },
         )
         inference_client = None
 
-    logger.info("Starting local control loop (task=%s, image_size=%s, duration=%s)", args.task_name, image_size, args.duration)
+    logger.info(
+        "Starting local control loop (task=%s, image_size=%s, safe_mode=%s, flip_cameras=%s, record_dir=%s)",
+        args.task_name,
+        image_size,
+        safe_mode,
+        args.flip_cameras or "none",
+        args.record_dir or "none",
+    )
 
     from local_loop_adapter import local_control_loop_dexbotic
 
@@ -307,6 +329,8 @@ def main() -> None:
         action_type=action_type,
         duration=args.duration,
         use_keyboard=not args.no_keyboard,
+        safe_mode=safe_mode,
+        record_dir=args.record_dir,
     )
 
 

@@ -7,7 +7,7 @@ PI05 WebSocket 推理服务（GPU 端）：
 
 Usage
 -----
-  python -m local_arx5.run_pi05_ws_server \\
+  python arx5_client/run_pi05_ws_server.py \\
       --policy_path lerobot/pi05_base \\
       --host 0.0.0.0 --port 8765
 """
@@ -31,7 +31,7 @@ for p in (_REPO_ROOT, _THIS_DIR):
         sys.path.insert(0, str(p))
 
 try:
-    import lerobot
+    import lerobot  # noqa: F401
 except ImportError:
     _lerobot_src = Path(__file__).resolve().parents[2] / "lerobot" / "src"
     if _lerobot_src.exists():
@@ -45,6 +45,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 def _jpeg_bytes_to_rgb_np(data: bytes) -> np.ndarray:
     arr = np.frombuffer(data, dtype=np.uint8)
     bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
@@ -53,8 +54,13 @@ def _jpeg_bytes_to_rgb_np(data: bytes) -> np.ndarray:
     return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
 
-def build_pi05_batch(robot_state: dict, prompt: str, policy, device):
-    """将请求中的 robot_state 转为 PI05 输入 batch。仅加入请求中有的图像，其余 PI05 槽位不加入，由模型 mask。"""
+def build_pi05_batch(robot_state: dict, prompt: str, policy) -> dict:
+    """Build an unbatched observation dict for the PI05 preprocessor pipeline.
+
+    The preprocessor (loaded from pretrained) handles: AddBatchDim, Normalize,
+    PadState + Discretize + BuildPrompt, Tokenize, and ToDevice.
+    So we only do format conversion here (numpy -> torch, HWC -> CHW, uint8 -> float).
+    """
     from lerobot.configs.types import FeatureType
     from lerobot.utils.constants import OBS_STATE as OBS_STATE_KEY
 
@@ -62,39 +68,25 @@ def build_pi05_batch(robot_state: dict, prompt: str, policy, device):
         k for k, v in policy.config.input_features.items()
         if v.type == FeatureType.VISUAL and "empty" not in k
     )
-    # 按 client 传入的 image 顺序映射到前 N 个 PI05 槽，其余不加入（由模型 mask）
+
     present = list(robot_state.get("images", {}).keys())
-    obs = {}
+    batch: dict = {}
     for i, arx5_key in enumerate(present):
         if i >= len(image_keys):
             break
         pi05_key = image_keys[i]
         img_rgb = _jpeg_bytes_to_rgb_np(robot_state["images"][arx5_key])
-        obs[pi05_key] = img_rgb
+        t = torch.from_numpy(img_rgb).float() / 255.0
+        batch[pi05_key] = t.permute(2, 0, 1)  # (3, H, W), no batch dim
 
-    state = np.array(robot_state.get("action", [0] * 7), dtype=np.float32)
-    max_state_dim = getattr(policy.config, "max_state_dim", 32)
-    if len(state) < max_state_dim:
-        state = np.pad(state, (0, max_state_dim - len(state)), constant_values=0)
-    else:
-        state = state[:max_state_dim]
-    obs[OBS_STATE_KEY] = state
+    state = np.array(robot_state.get("action", [0.0] * 7), dtype=np.float32)
+    batch[OBS_STATE_KEY] = torch.from_numpy(state)  # (state_dim,), no pad, no batch dim
 
-    policy_device = next(policy.parameters()).device
-    batch = {}
-    for name, val in obs.items():
-        t = torch.from_numpy(val) if isinstance(val, np.ndarray) else torch.tensor(val)
-        if "image" in name:
-            t = t.float() / 255.0
-            t = t.permute(2, 0, 1)
-        t = t.unsqueeze(0).to(policy_device)
-        batch[name] = t
-    batch["task"] = [prompt]
-    batch["robot_type"] = ""
+    batch["task"] = prompt  # plain string; AddBatchDim wraps it in a list
     return batch
 
 
-def infer_pi05(policy, preprocessor, postprocessor, batch, action_steps: int) -> list:
+def infer_pi05(policy, preprocessor, postprocessor, batch: dict, action_steps: int) -> list:
     preprocessed = preprocessor(batch)
     with torch.no_grad():
         actions = policy.predict_action_chunk(preprocessed)
@@ -135,7 +127,7 @@ async def _handle_client(websocket, policy, preprocessor, postprocessor, action_
             await websocket.send(json.dumps({"ok": False, "error": "prompt is required"}))
             return
 
-        batch = build_pi05_batch(robot_state, prompt, policy, policy.config.device)
+        batch = build_pi05_batch(robot_state, prompt, policy)
         actions = infer_pi05(policy, preprocessor, postprocessor, batch, action_steps)
         for i, a in enumerate(actions):
             if len(a) < 7:
