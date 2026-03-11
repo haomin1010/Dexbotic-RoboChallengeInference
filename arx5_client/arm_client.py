@@ -168,15 +168,28 @@ class ARX5ArmClient:
         """True if a position was recorded via exit_teach_and_record()."""
         return self._recorded_position is not None
 
-    def move_to_recorded(self) -> None:
-        """Move to the last recorded position (must have called exit_teach_and_record first)."""
+    def move_to_recorded(
+        self, num_steps: int = 20, step_interval: float = 0.1
+    ) -> None:
+        """Move to the last recorded position (must have called exit_teach_and_record first).
+        Uses linear interpolation over num_steps with step_interval seconds between steps.
+        """
         if self._recorded_position is None:
             raise ValueError("No recorded position — press [B] to teach, then [N] to record first")
         self.hold_position()
         time.sleep(0.1)
-        self.arm.set_ee_pose_xyzrpy(list(self._recorded_position[:6]))
-        self.arm.set_catch_pos(float(self._recorded_position[6]))
-        time.sleep(3.0)
+
+        start = np.array(self.get_state(), dtype=np.float64)
+        target = np.array(self._recorded_position, dtype=np.float64)
+
+        for i in range(1, num_steps + 1):
+            t = i / num_steps
+            interp = start + (target - start) * t
+            self.arm.set_ee_pose_xyzrpy(interp[:6].tolist())
+            self.arm.set_catch_pos(float(interp[6]))
+            if i < num_steps:
+                time.sleep(step_interval)
+
         self._last_executed = self.get_state()
 
     def get_state(self) -> list:

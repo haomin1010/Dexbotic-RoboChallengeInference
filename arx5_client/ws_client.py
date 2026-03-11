@@ -6,11 +6,18 @@ WebSocket 推理客户端：将观测发送到远程推理服务，接收动作�
 
 import asyncio
 import base64
+import datetime
 import json
 import logging
+import time
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# 推理耗时日志文件（单独保存）
+_LATENCY_LOG_DIR = Path(__file__).resolve().parents[1] / "logs"
+_LATENCY_LOG_FILE = _LATENCY_LOG_DIR / "inference_latency.log"
 
 
 def _encode_robot_state(robot_state: dict) -> dict:
@@ -34,8 +41,21 @@ async def _infer_async(server_url: str, task_name: str, robot_state: dict) -> li
     payload["task_name"] = task_name
 
     async with websockets.connect(server_url, max_size=2**26) as ws:
+        t0 = time.perf_counter()
         await ws.send(json.dumps(payload))
         raw = await ws.recv()
+        elapsed = time.perf_counter() - t0
+        line = "%s 推理往返耗时: %.3fs (发送请求 -> 收到动作)\n" % (
+            datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+            elapsed,
+        )
+        logger.info("[客户端] %s", line.strip())
+        try:
+            _LATENCY_LOG_DIR.mkdir(parents=True, exist_ok=True)
+            with open(_LATENCY_LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(line)
+        except OSError as e:
+            logger.warning("写入推理耗时日志失败: %s", e)
 
     data = json.loads(raw)
     if not data.get("ok"):
